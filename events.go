@@ -16,10 +16,12 @@ type AnalyticsClient interface {
 type EventName string
 
 const (
+	EventCloudIssueFixed           EventName = "cloud-issue-fixed"
 	EventInfracostAiLogin          EventName = "infracost-ai-login"
 	EventInfracostAiReportViewed   EventName = "infracost-ai-report-viewed"
 	EventInfracostAiRunCompleted   EventName = "infracost-ai-run-completed"
 	EventInfracostAiSetupCompleted EventName = "infracost-ai-setup-completed"
+	EventInfracostAuthLogin        EventName = "infracost-auth-login"
 	EventInfracostCiSetupOutcome   EventName = "infracost-ci-setup-outcome"
 	EventInfracostCommand          EventName = "infracost-command"
 	EventInfracostComment          EventName = "infracost-comment"
@@ -31,16 +33,110 @@ const (
 // Valid reports whether v is one of the EventName values.
 func (v EventName) Valid() bool {
 	switch v {
-	case EventInfracostAiLogin,
+	case EventCloudIssueFixed,
+		EventInfracostAiLogin,
 		EventInfracostAiReportViewed,
 		EventInfracostAiRunCompleted,
 		EventInfracostAiSetupCompleted,
+		EventInfracostAuthLogin,
 		EventInfracostCiSetupOutcome,
 		EventInfracostCommand,
 		EventInfracostComment,
 		EventInfracostError,
 		EventInfracostOutput,
 		EventInfracostRun:
+		return true
+	}
+	return false
+}
+
+// CloudIssueFixedProperties holds properties for the cloud-issue-fixed event.
+type CloudIssueFixedProperties struct {
+	// The organization the policy belongs to.
+	OrgId string `json:"orgId"`
+
+	// The policy the fixed issue belonged to.
+	PolicyId string `json:"policyId"`
+
+	// A stable identifier for the policy. Set for FinOps and cloud security
+	// policies only.
+	PolicySlug *string `json:"policySlug,omitempty"`
+
+	// The policy type.
+	Type CloudIssueFixedType `json:"type"`
+
+	// The repo the run targeted. From the CLI, the scanned directory's `origin`
+	// remote URL, or empty outside a git repo.
+	RepoId string `json:"repoId"`
+
+	// The base branch the run targeted. Absent on pull request runs. From the CLI,
+	// the name of the branch checked out locally.
+	BranchId *string `json:"branchId,omitempty"`
+
+	// The pull request the run targeted. Absent on base branch runs and from the
+	// CLI.
+	PullRequestId *string `json:"pullRequestId,omitempty"`
+
+	// Where the fix was detected.
+	Source *CloudIssueFixedSource `json:"source,omitempty"`
+
+	// The project containing the fixed resource.
+	ProjectName string `json:"projectName"`
+
+	// The address of the resource that was fixed.
+	ResourceAddress string `json:"resourceAddress"`
+}
+
+// TrackCloudIssueFixed tracks the cloud-issue-fixed event.
+//
+// Fired when an individual policy issue is fixed on a run, providing granular
+// visibility into incremental improvements. The v2 CLI (infracost/cli) also
+// fires it when a local `scan` no longer fails a policy that the previous scan
+// of the same project failed, so a resource fixed and broken again locally can
+// fire it more than once. Filter on `source` to count only one of the two.
+func TrackCloudIssueFixed(ctx context.Context, client AnalyticsClient, props CloudIssueFixedProperties) error {
+	return client.Track(ctx, EventCloudIssueFixed, props)
+}
+
+type CloudIssueFixedType string
+
+const (
+	// A tagging policy.
+	CloudIssueFixedType_TagPolicy CloudIssueFixedType = "tag-policy"
+
+	// A FinOps policy.
+	CloudIssueFixedType_FinopsPolicy CloudIssueFixedType = "finops-policy"
+
+	// A cloud security policy.
+	CloudIssueFixedType_CloudSecurityPolicy CloudIssueFixedType = "cloud-security-policy"
+)
+
+// Valid reports whether v is one of the CloudIssueFixedType values.
+func (v CloudIssueFixedType) Valid() bool {
+	switch v {
+	case CloudIssueFixedType_TagPolicy,
+		CloudIssueFixedType_FinopsPolicy,
+		CloudIssueFixedType_CloudSecurityPolicy:
+		return true
+	}
+	return false
+}
+
+type CloudIssueFixedSource string
+
+const (
+	// An Infracost Cloud run.
+	CloudIssueFixedSource_Cloud CloudIssueFixedSource = "cloud"
+
+	// A local `scan` with the v2 CLI.
+	CloudIssueFixedSource_Cli CloudIssueFixedSource = "cli"
+)
+
+// Valid reports whether v is one of the CloudIssueFixedSource values.
+func (v CloudIssueFixedSource) Valid() bool {
+	switch v {
+	case CloudIssueFixedSource_Cloud,
+		CloudIssueFixedSource_Cli:
 		return true
 	}
 	return false
@@ -505,6 +601,57 @@ func (v InfracostAiSetupCompletedCaller) Valid() bool {
 	return false
 }
 
+// InfracostAuthLoginProperties holds properties for the infracost-auth-login event.
+type InfracostAuthLoginProperties struct {
+	// How the login ended.
+	Outcome InfracostAuthLoginOutcome `json:"outcome"`
+
+	// Whether the login created an organization for a user who had none.
+	CreatedOrg bool `json:"createdOrg"`
+
+	// Wall-clock time the login took, in seconds, including time spent in the
+	// browser.
+	DurationSeconds float64 `json:"durationSeconds"`
+
+	// How many organizations the user belongs to after the login. Only set when
+	// the user could be read, since an unread user looks the same as a user in no
+	// organization.
+	OrgCount *int `json:"orgCount,omitempty"`
+}
+
+// TrackInfracostAuthLogin tracks the infracost-auth-login event.
+//
+// Sent by the v2 CLI (infracost/cli) when `infracost auth login` ends, whether
+// it succeeded, failed or was abandoned. Lets the "not logged in" errors a CLI
+// install emits before logging in be joined to the login that follows on the
+// same `installId`. Also inherits the standard CLI global metadata. A
+// successful CLI login is also recorded by the server, with `source: cli`,
+// which is the one to count logins with; this event is the CLI's view of the
+// attempt, including the failures and abandons the server never sees.
+func TrackInfracostAuthLogin(ctx context.Context, client AnalyticsClient, props InfracostAuthLoginProperties) error {
+	return client.Track(ctx, EventInfracostAuthLogin, props)
+}
+
+type InfracostAuthLoginOutcome string
+
+const (
+	// The user logged in.
+	InfracostAuthLoginOutcome_Success InfracostAuthLoginOutcome = "success"
+
+	// The login failed or was abandoned.
+	InfracostAuthLoginOutcome_Error InfracostAuthLoginOutcome = "error"
+)
+
+// Valid reports whether v is one of the InfracostAuthLoginOutcome values.
+func (v InfracostAuthLoginOutcome) Valid() bool {
+	switch v {
+	case InfracostAuthLoginOutcome_Success,
+		InfracostAuthLoginOutcome_Error:
+		return true
+	}
+	return false
+}
+
 // InfracostCiSetupOutcomeProperties holds properties for the infracost-ci-setup-outcome event.
 type InfracostCiSetupOutcomeProperties struct {
 	// Terminal CI setup outcome.
@@ -557,9 +704,6 @@ type InfracostCiSetupOutcomeProperties struct {
 // self-contained event: it carries the run's inputs as well as its result, so
 // the funnel needs no start event to join against. A run killed by a signal
 // reports nothing.
-//
-// Planned: this event is not yet confirmed live. Set its status to active
-// in the catalog once it is deployed and emitting.
 func TrackInfracostCiSetupOutcome(ctx context.Context, client AnalyticsClient, props InfracostCiSetupOutcomeProperties) error {
 	return client.Track(ctx, EventInfracostCiSetupOutcome, props)
 }
@@ -581,6 +725,9 @@ const (
 
 	// The API key was required but unavailable.
 	InfracostCiSetupOutcomeOutcome_ApiKeyMissing InfracostCiSetupOutcomeOutcome = "api-key-missing"
+
+	// The API key was rejected and no valid one was entered.
+	InfracostCiSetupOutcomeOutcome_ApiKeyInvalid InfracostCiSetupOutcomeOutcome = "api-key-invalid"
 
 	// The repository was already connected through the app.
 	InfracostCiSetupOutcomeOutcome_AppConnected InfracostCiSetupOutcomeOutcome = "app-connected"
@@ -606,6 +753,7 @@ func (v InfracostCiSetupOutcomeOutcome) Valid() bool {
 		InfracostCiSetupOutcomeOutcome_Declined,
 		InfracostCiSetupOutcomeOutcome_SecretFailed,
 		InfracostCiSetupOutcomeOutcome_ApiKeyMissing,
+		InfracostCiSetupOutcomeOutcome_ApiKeyInvalid,
 		InfracostCiSetupOutcomeOutcome_AppConnected,
 		InfracostCiSetupOutcomeOutcome_AppPitched,
 		InfracostCiSetupOutcomeOutcome_RecipePrinted,
@@ -947,6 +1095,14 @@ type InfracostErrorProperties struct {
 	// produce an identical string and can be grouped. Empty when the trace could
 	// not be parsed.
 	Stacktrace *string `json:"stacktrace,omitempty"`
+
+	// Wall-clock time the run took before it failed, in seconds. Set by the v2 CLI
+	// for `scan`, `diff` and `inspect`.
+	RunSeconds *float64 `json:"runSeconds,omitempty"`
+
+	// The output format of the failed run, with the same meaning as `outputFormat`
+	// on `infracost-run` for the same emitter.
+	OutputFormat *string `json:"outputFormat,omitempty"`
 }
 
 // TrackInfracostError tracks the infracost-error event.
@@ -1044,9 +1200,11 @@ type InfracostRunProperties struct {
 	// `infracost diff`.
 	Flags *[]string `json:"flags,omitempty"`
 
-	// Set when the user explicitly passes the `--format` flag; always `json` for
-	// CI runs. Empty or undefined means the flag wasn't set and the default output
-	// format (table) was used.
+	// From the v1 CLI, set when the user explicitly passes the `--format` flag;
+	// always `json` for CI runs. Empty or undefined means the flag wasn't set and
+	// the default output format (table) was used. The v2 CLI always sets it, to
+	// `text`, `json` or `llm` for `scan` and `price`, to `diff`, `diff-json` or
+	// `diff-llm` for `diff`, and to `inspect` for `inspect`, which has one output.
 	OutputFormat *string `json:"outputFormat,omitempty"`
 
 	// The project types detected by Infracost, one entry per project when a config
@@ -1215,6 +1373,24 @@ type InfracostRunProperties struct {
 
 	// Not used yet.
 	RemediationErrors *float64 `json:"remediationErrors,omitempty"`
+
+	// Resources in this run that weren't in the previous run of the same
+	// directory. Set by the v2 CLI's `scan` only when a previous run exists.
+	NewResourceCount *int `json:"newResourceCount,omitempty"`
+
+	// Resources whose configuration changed since the previous run of the same
+	// directory. Set by the v2 CLI's `scan` only when a previous run exists.
+	ChangedResourceCount *int `json:"changedResourceCount,omitempty"`
+
+	// Failing policy results in this run that weren't failing in the previous run
+	// of the same directory. Set by the v2 CLI's `scan` only when a previous run
+	// exists.
+	NewIssueCount *int `json:"newIssueCount,omitempty"`
+
+	// Failing policy results in this run that were already failing in the previous
+	// run of the same directory. Set by the v2 CLI's `scan` only when a previous
+	// run exists.
+	ExistingIssueCount *int `json:"existingIssueCount,omitempty"`
 }
 
 // TrackInfracostRun tracks the infracost-run event.
